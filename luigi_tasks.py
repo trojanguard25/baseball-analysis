@@ -1,5 +1,6 @@
 import luigi
 import pymysql
+import csv
 
 import sys
 
@@ -44,7 +45,7 @@ class AgeSeasons(luigi.Task):
     def output(self):
         return luigi.LocalTarget('/home/dan/data/age/age_seasons_{0}.csv'.format(str(self.uuid)))
 
-class WarSeasons(luigi.Task):
+class BatWarSeasons(luigi.Task):
     uuid = luigi.Parameter()
 
     def run(self):
@@ -57,12 +58,78 @@ class WarSeasons(luigi.Task):
                 out_file.write(str(year) + "," + str(bat_war) + '\n')
 
     def output(self):
-        return luigi.LocalTarget('/home/dan/data/war_by_year_{0}.csv'.format(str(self.uuid)))
+        return luigi.LocalTarget('/home/dan/data/war/bat/by_year_{0}.csv'.format(str(self.uuid)))
 
+class WarcelTask(luigi.Task):
+    uuid = luigi.Parameter()
+    year = luigi.Parameter()
+
+    def requires(self):
+        return {'age' : AgeSeasons(self.uuid), 
+                'war' : BatWarSeasons(self.uuid)}
+
+    def run(self):
+        age = 0
+        year = 0
+        with self.input()['age'].open() as age_f:
+            reader = csv.reader(age_f)
+            for row in reader:
+                age = int(row[1])
+                year = int(row[0])
+                break
+
+        war = {}
+        with self.input()['war'].open() as war_f:
+            reader = csv.reader(war_f)
+            for row in reader:
+                if row[0] != 'Total':
+                    war[int(row[0])] = float(row[1])
+
+        p_age = age + (int(self.year) - year)
+
+        warcel = []
+        w_1 = 0
+        if int(self.year) - 1 in war:
+            w_1 = war[int(self.year) - 1]
+        warcel.insert(0, w_1)
+        w_2 = 0
+        if int(self.year) - 2 in war:
+            w_2 = war[int(self.year) - 2]
+        warcel.insert(0, w_2)
+        w_3 = 0
+        if int(self.year) - 3 in war:
+            w_3 = war[int(self.year) - 3]
+        warcel.insert(0, w_3)
+
+        w_a = 0.1 * w_3 + 0.3 * w_2 + 0.6 * w_1
+
+        w_b = 0.8 * w_a
+
+        w0 = w_b + ((30 - p_age) * 0.1)
+        warcel.append(w0)
+        w1 = w0 - 0.4 + ((30 - p_age) * 0.08)
+        warcel.append(w1)
+        w2 = w1 - 0.4 + ((30 - p_age) * 0.03)
+        warcel.append(w2)
+        w3 = w2 - 0.4 + ((30 - p_age) * 0.03)
+        warcel.append(w3)
+        w4 = w3 - 0.4 + ((30 - p_age) * 0.03)
+        warcel.append(w4)
+
+        with self.output().open('w') as out_file:
+            year = int(self.year) - 3
+            for war in warcel:
+                out_file.write(str(year) + "," + str(war) + '\n')
+                year += 1
+
+    def output(self):
+        return luigi.LocalTarget('/home/dan/data/warcel/bat/{0}/{1}.csv'.format(str(self.year), str(self.uuid)))
 
 class TestTask(luigi.Task):
     def requires(self):
-        return AgeSeasons('f322d40f')
+        #return AgeSeasons('f322d40f')
+        #return WarcelTask('f322d40f', 2014)
+        return WarcelTask('4b6d5f1d', 2017)
 
     def run(self):
         print "hi"
