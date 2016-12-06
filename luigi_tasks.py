@@ -3,6 +3,7 @@ import pymysql
 import csv
 
 import sys
+import math
 
 sys.path.append('/home/dan/github/player-finder/src/')
 from baseballReferenceSource import BRSource
@@ -60,7 +61,7 @@ class BatWarSeasons(luigi.Task):
     def output(self):
         return luigi.LocalTarget('/home/dan/data/war/bat/by_year_{0}.csv'.format(str(self.uuid)))
 
-class WarcelTask(luigi.Task):
+class BatWarcel(luigi.Task):
     uuid = luigi.Parameter()
     year = luigi.Parameter()
 
@@ -125,17 +126,94 @@ class WarcelTask(luigi.Task):
     def output(self):
         return luigi.LocalTarget('/home/dan/data/warcel/bat/{0}/{1}.csv'.format(str(self.year), str(self.uuid)))
 
+class WarcelError(luigi.Task):
+    uuid = luigi.Parameter()
+    year = luigi.Parameter()
+    
+    def requires(self):
+        return {'warcel' : BatWarcel(self.uuid, self.year), 
+                'war' : BatWarSeasons(self.uuid)}
+
+    def run(self):
+        war = {}
+        with self.input()['war'].open() as war_f:
+            reader = csv.reader(war_f)
+            for row in reader:
+                if row[0] != 'Total':
+                    war[int(row[0])] = float(row[1])
+
+        errors = []
+        with self.input()['warcel'].open() as warcel_f:
+            reader = csv.reader(warcel_f)
+            for row in reader:
+                year = int(row[0])
+                warcel_war = float(row[1])
+                if year in war:
+                    errors.append([str(year),str(warcel_war), str(war[year]),str(warcel_war - war[year])])
+                else:
+                    errors.append([str(year),str(warcel_war), "0",str(warcel_war)])
+
+        with self.output().open('w') as out_file:
+            year = int(self.year)
+            for err in errors:
+                out_file.write(",".join(err) + '\n')
+
+    def output(self):
+        return luigi.LocalTarget('/home/dan/data/warcel/bat/{0}/{1}_error.csv'.format(str(self.year), str(self.uuid)))
+
 class TestTask(luigi.Task):
     def requires(self):
         #return AgeSeasons('f322d40f')
-        #return WarcelTask('f322d40f', 2014)
-        return WarcelTask('4b6d5f1d', 2017)
+        return WarcelError('f322d40f', 2013)
+        #return WarcelError('4b6d5f1d', 2017)
 
     def run(self):
         print "hi"
 
     def output(self):
         return luigi.LocalTarget('home/dan/data/test.txt')
+
+class WarAverageError(luigi.Task):
+    year = luigi.IntParameter()
+
+    def requires(self):
+        conn = pymysql.connect(host=Config.dbHost, port=Config.dbPort, user=Config.dbUser, passwd=Config.dbPass, db=Config.dbName)
+
+        sql = 'select c.key_person'
+        sql += ' from chadwickbureau c '
+        sql += ' join br_war_bat b '
+        sql += ' on c.key_bbref = b.player_ID '
+        sql += ' where c.mlb_played_first <= {0} and c.mlb_played_last > {1} and b.pitcher = \'N\' '.format(str(self.year-3), str(self.year-1)) 
+        sql += ' group by c.key_person '
+
+        cur = conn.cursor()
+        cur.execute(sql)
+
+        return [WarcelError(str(uuid[0]),self.year) for uuid in cur]
+
+    def run(self):
+        total = 0
+        errors = [0.0, 0.0, 0.0, 0.0, 0.0]
+        for t in self.input():
+            total += 1
+            with t.open('r') as in_file:
+                reader = csv.reader(in_file)
+                i = 0
+                for row in reader:
+                    if int(row[0]) < self.year:
+                        continue
+
+                    errors[i] += math.fabs(float(row[3]))
+                    i += 1
+
+
+        with self.output().open('w') as out_file:
+            out_file.write(str(total) + "\n")
+            out_file.write(".".join(map(str,errors)))
+
+    def output(self):
+        return luigi.LocalTarget('/home/dan/data/warcel/bat/{0}/total_error.txt'.format(str(self.year)))
+
 
 class WarList(luigi.Task):
     def requires(self):
